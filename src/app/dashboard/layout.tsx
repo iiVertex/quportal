@@ -6,6 +6,7 @@ import Image from "next/image";
 import {
   LayoutDashboard,
   BookOpen,
+  Calendar,
   BarChart3,
   CheckSquare,
   Settings,
@@ -33,6 +34,7 @@ import { createClient } from "@/lib/supabase/client";
 const navItems = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { title: "Courses", href: "/dashboard/courses", icon: BookOpen },
+  { title: "Attendance", href: "/dashboard/attendance", icon: Calendar },
   { title: "Grades", href: "/dashboard/grades", icon: BarChart3 },
   { title: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
   { title: "Settings", href: "/dashboard/settings", icon: Settings },
