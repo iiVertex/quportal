@@ -12,6 +12,16 @@ type Course = Tables<"courses">;
 type Assignment = Tables<"assignments">;
 type Task = Tables<"tasks">;
 
+type UpcomingItem = {
+  id: string;
+  title: string;
+  dueDate: string | null;
+  courseId: string | null;
+  source: "assignment" | "task";
+  priority: Assignment["priority"] | Task["priority"];
+  status: Assignment["status"] | null;
+};
+
 export default function DashboardPage() {
   const [userName, setUserName] = useState("");
   const [courses, setCourses] = useState<Course[]>([]);
@@ -47,11 +57,37 @@ export default function DashboardPage() {
   const totalTasks = tasks.length;
   const taskProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  const upcomingAssignments = assignments
-    .filter((a) => a.due_date && new Date(a.due_date) >= new Date() && a.status !== "completed")
-    .slice(0, 5);
-
-  const pendingTasks = tasks.filter((t) => !t.completed).slice(0, 5);
+  const upcomingItems: UpcomingItem[] = [
+    ...assignments
+      .filter((a) => a.due_date && new Date(a.due_date) >= new Date() && a.status !== "completed")
+      .map((assignment) => ({
+        id: assignment.id,
+        title: assignment.title,
+        dueDate: assignment.due_date,
+        courseId: assignment.course_id,
+        source: "assignment" as const,
+        priority: assignment.priority,
+        status: assignment.status,
+      })),
+    ...tasks
+      .filter((task) => !task.completed)
+      .map((task) => ({
+        id: task.id,
+        title: task.title,
+        dueDate: task.due_date,
+        courseId: task.course_id,
+        source: "task" as const,
+        priority: task.priority,
+        status: null,
+      })),
+  ]
+    .sort((left, right) => {
+      if (!left.dueDate && !right.dueDate) return 0;
+      if (!left.dueDate) return 1;
+      if (!right.dueDate) return -1;
+      return new Date(left.dueDate).getTime() - new Date(right.dueDate).getTime();
+    })
+    .slice(0, 8);
 
   const gradedAssignments = assignments.filter((a) => a.grade !== null && a.max_grade !== null);
   const avgGrade = gradedAssignments.length > 0
@@ -164,34 +200,33 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Upcoming Assignments */}
+      {/* Upcoming Feed */}
+      <div>
         <Card className="rounded-3xl border-[#F3F4F6] dark:border-[#1E2130]">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg font-semibold" style={{ letterSpacing: "-0.02em" }}>
               <Clock className="h-5 w-5 text-primary stroke-[2px]" />
-              Upcoming Assignments
+              Upcoming
             </CardTitle>
-            <CardDescription>Next deadlines to meet</CardDescription>
+            <CardDescription>Next assignments and tasks in one place</CardDescription>
           </CardHeader>
           <CardContent>
-            {upcomingAssignments.length === 0 ? (
+            {upcomingItems.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                No upcoming assignments. 🎉
+                Nothing upcoming right now. 🎉
               </p>
             ) : (
               <div className="space-y-3">
-                {upcomingAssignments.map((a) => {
-                  const course = courses.find((c) => c.id === a.course_id);
-                  const dueDate = a.due_date ? new Date(a.due_date) : null;
+                {upcomingItems.map((item) => {
+                  const course = courses.find((c) => c.id === item.courseId);
+                  const dueDate = item.dueDate ? new Date(item.dueDate) : null;
                   const daysLeft = dueDate
                     ? Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
                     : null;
 
                   return (
                     <div
-                      key={a.id}
+                      key={`${item.source}-${item.id}`}
                       className="flex items-center justify-between p-3 rounded-2xl bg-muted/50 hover:bg-muted transition-colors"
                     >
                       <div className="flex items-center gap-3">
@@ -200,15 +235,35 @@ export default function DashboardPage() {
                           style={{ backgroundColor: course?.color || "#4F46E5" }}
                         />
                         <div>
-                          <p className="text-sm font-medium">{a.title}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">{item.title}</p>
+                            <Badge variant="outline" className="rounded-xl text-[10px] uppercase tracking-wide">
+                              {item.source}
+                            </Badge>
+                          </div>
                           <p className="text-xs text-muted-foreground">
-                            {course?.code || "Unknown"}
+                            {course?.code || "General"}
+                            {item.dueDate ? ` • Due ${new Date(item.dueDate).toLocaleDateString()}` : " • No due date"}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         {daysLeft !== null && daysLeft <= 2 && (
                           <AlertCircle className="h-4 w-4 text-destructive stroke-[2px]" />
+                        )}
+                        {item.priority && (
+                          <Badge
+                            variant="outline"
+                            className={`rounded-xl text-xs ${
+                              item.priority === "high"
+                                ? "border-destructive text-destructive"
+                                : item.priority === "medium"
+                                ? "border-chart-4 text-chart-4"
+                                : ""
+                            }`}
+                          >
+                            {item.priority}
+                          </Badge>
                         )}
                         <Badge
                           variant={daysLeft !== null && daysLeft <= 2 ? "destructive" : "secondary"}
@@ -223,65 +278,6 @@ export default function DashboardPage() {
                             : "No date"}
                         </Badge>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Pending Tasks */}
-        <Card className="rounded-3xl border-[#F3F4F6] dark:border-[#1E2130]">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg font-semibold" style={{ letterSpacing: "-0.02em" }}>
-              <CheckSquare className="h-5 w-5 text-primary stroke-[2px]" />
-              Pending Tasks
-            </CardTitle>
-            <CardDescription>Things to do</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {pendingTasks.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">
-                All tasks completed! 🎉
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {pendingTasks.map((t) => {
-                  const course = courses.find((c) => c.id === t.course_id);
-                  return (
-                    <div
-                      key={t.id}
-                      className="flex items-center justify-between p-3 rounded-2xl bg-muted/50 hover:bg-muted transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="h-3 w-3 rounded-full"
-                          style={{
-                            backgroundColor: course?.color || "#4F46E5",
-                          }}
-                        />
-                        <div>
-                          <p className="text-sm font-medium">{t.title}</p>
-                          {t.due_date && (
-                            <p className="text-xs text-muted-foreground">
-                              Due {new Date(t.due_date).toLocaleDateString()}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <Badge
-                        variant="outline"
-                        className={`rounded-xl text-xs ${
-                          t.priority === "high"
-                            ? "border-destructive text-destructive"
-                            : t.priority === "medium"
-                            ? "border-chart-4 text-chart-4"
-                            : ""
-                        }`}
-                      >
-                        {t.priority}
-                      </Badge>
                     </div>
                   );
                 })}
