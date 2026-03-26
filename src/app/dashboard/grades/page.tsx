@@ -74,9 +74,17 @@ export default function GradesPage() {
     const fetchedCourses = coursesRes.data || [];
     setCourses(fetchedCourses);
     setAssignments(assignmentsRes.data || []);
-    if (!selectedCourse && fetchedCourses.length > 0) {
-      setSelectedCourse(fetchedCourses[0].id);
-    }
+    setSelectedCourse((prevSelectedCourse) => {
+      if (!fetchedCourses.length) {
+        return "";
+      }
+
+      const isCurrentSelectionValid = fetchedCourses.some(
+        (course) => course.id === prevSelectedCourse
+      );
+
+      return isCurrentSelectionValid ? prevSelectedCourse : fetchedCourses[0].id;
+    });
     setLoading(false);
   }, []);
 
