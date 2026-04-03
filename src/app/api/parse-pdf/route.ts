@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractText } from "unpdf";
+import mammoth from "mammoth";
 import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
@@ -40,29 +41,55 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
 
-    if (!file || file.type !== "application/pdf") {
+    if (!file) {
       return NextResponse.json(
-        { error: "A PDF file is required" },
+        { error: "A file is required" },
+        { status: 400 }
+      );
+    }
+
+    const fileName = file.name.toLowerCase();
+    const isPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
+    const isDocx = file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || fileName.endsWith(".docx");
+    const isTextLike =
+      file.type.startsWith("text/") ||
+      fileName.endsWith(".txt") ||
+      fileName.endsWith(".md");
+
+    if (!isPdf && !isDocx && !isTextLike) {
+      return NextResponse.json(
+        {
+          error: "Unsupported file type. Please upload PDF, DOCX, TXT, or MD files.",
+        },
         { status: 400 }
       );
     }
 
     const buffer = new Uint8Array(await file.arrayBuffer());
-    const { text } = await extractText(buffer);
-    const fullText = text.join("\n");
+    let fullText = "";
+
+    if (isPdf) {
+      const { text } = await extractText(buffer);
+      fullText = text.join("\n");
+    } else if (isDocx) {
+      const result = await mammoth.extractRawText({ buffer: Buffer.from(buffer) });
+      fullText = result.value;
+    } else {
+      fullText = new TextDecoder("utf-8").decode(buffer);
+    }
 
     if (!fullText || fullText.trim().length === 0) {
       return NextResponse.json(
-        { error: "Could not extract text from this PDF. It may be image-based." },
+        { error: "Could not extract readable text from this file." },
         { status: 422 }
       );
     }
 
     return NextResponse.json({ text: fullText });
   } catch (error) {
-    console.error("PDF parse error:", error);
+    console.error("Document parse error:", error);
     return NextResponse.json(
-      { error: "Failed to parse PDF" },
+      { error: "Failed to parse file" },
       { status: 500 }
     );
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, BarChart3, Pencil } from "lucide-react";
+import { Plus, Trash2, BarChart3, Pencil, FileText, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,14 @@ import type { Tables } from "@/lib/database.types";
 type Course = Tables<"courses">;
 type Assignment = Tables<"assignments">;
 
+type CourseExtras = {
+  syllabusPdfDataUrl?: string;
+  syllabusFileName?: string;
+  marksLost?: number | null;
+};
+
+const COURSE_EXTRAS_STORAGE_KEY = "utm-grades-course-extras-v1";
+
 export default function GradesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -60,6 +68,9 @@ export default function GradesPage() {
   const [editingGradeId, setEditingGradeId] = useState<string | null>(null);
   const [inlineGrade, setInlineGrade] = useState("");
   const [inlineMaxGrade, setInlineMaxGrade] = useState("");
+  const [courseExtras, setCourseExtras] = useState<Record<string, CourseExtras>>({});
+  const [marksLostInputs, setMarksLostInputs] = useState<Record<string, string>>({});
+  const [uploadingSyllabus, setUploadingSyllabus] = useState<Record<string, boolean>>({});
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
@@ -91,6 +102,28 @@ export default function GradesPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem(COURSE_EXTRAS_STORAGE_KEY);
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved) as Record<string, CourseExtras>;
+      setCourseExtras(parsed);
+    } catch {
+      // Ignore malformed local cache to avoid breaking the page.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(COURSE_EXTRAS_STORAGE_KEY, JSON.stringify(courseExtras));
+    } catch {
+      // Ignore persistence errors (e.g. storage quota) and keep state in memory.
+    }
+  }, [courseExtras]);
 
   const resetForm = () => {
     setTitle("");
@@ -170,6 +203,72 @@ export default function GradesPage() {
     const supabase = createClient();
     await supabase.from("assignments").delete().eq("id", id);
     fetchData();
+  };
+
+  const handleSyllabusUpload = async (courseId: string, file: File) => {
+    if (!file) return;
+
+    setUploadingSyllabus((prev) => ({ ...prev, [courseId]: true }));
+
+    try {
+      if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+        throw new Error("Please upload a PDF file.");
+      }
+
+      const pdfDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") {
+            resolve(reader.result);
+            return;
+          }
+          reject(new Error("Failed to read PDF file."));
+        };
+        reader.onerror = () => reject(new Error("Failed to read PDF file."));
+        reader.readAsDataURL(file);
+      });
+
+      setCourseExtras((prev) => ({
+        ...prev,
+        [courseId]: {
+          ...prev[courseId],
+          syllabusPdfDataUrl: pdfDataUrl,
+          syllabusFileName: file.name,
+        },
+      }));
+    } catch (error) {
+      console.error("Syllabus upload failed", error);
+      window.alert(error instanceof Error ? error.message : "Failed to upload syllabus");
+    } finally {
+      setUploadingSyllabus((prev) => ({ ...prev, [courseId]: false }));
+    }
+  };
+
+  const saveMarksLost = (courseId: string) => {
+    const rawValue = marksLostInputs[courseId]?.trim() ?? "";
+    if (!rawValue) {
+      setCourseExtras((prev) => ({
+        ...prev,
+        [courseId]: {
+          ...prev[courseId],
+          marksLost: null,
+        },
+      }));
+      return;
+    }
+
+    const parsed = Number(rawValue);
+    if (Number.isNaN(parsed)) return;
+
+    const clamped = Math.max(0, Math.min(100, parsed));
+    setMarksLostInputs((prev) => ({ ...prev, [courseId]: clamped.toString() }));
+    setCourseExtras((prev) => ({
+      ...prev,
+      [courseId]: {
+        ...prev[courseId],
+        marksLost: clamped,
+      },
+    }));
   };
 
   const filteredAssignments = selectedCourse
@@ -456,6 +555,118 @@ export default function GradesPage() {
                           ).join(", ")}
                         </p>
                       )}
+                    </div>
+
+                    <div className="mt-4 space-y-3 border-t border-border/60 pt-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium">View syllabus</p>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button size="sm" variant="outline" className="rounded-xl gap-1.5">
+                              <FileText className="h-4 w-4" />
+                              {courseExtras[course.id]?.syllabusPdfDataUrl ? "View" : "Upload"}
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-2xl rounded-3xl">
+                            <DialogHeader>
+                              <DialogTitle>{course.code} Syllabus</DialogTitle>
+                              <DialogDescription>
+                                Upload a PDF and view it directly here.
+                              </DialogDescription>
+                            </DialogHeader>
+
+                            <div className="space-y-4">
+                              {courseExtras[course.id]?.syllabusPdfDataUrl ? (
+                                <div className="rounded-2xl border border-border/70 overflow-hidden">
+                                  <iframe
+                                    title={`${course.code} syllabus PDF`}
+                                    src={courseExtras[course.id]?.syllabusPdfDataUrl}
+                                    className="h-110 w-full"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="rounded-2xl border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                                  No syllabus uploaded yet for this course.
+                                </div>
+                              )}
+
+                              <div className="space-y-2">
+                                <Label htmlFor={`syllabus-${course.id}`}>Upload syllabus</Label>
+                                <Input
+                                  id={`syllabus-${course.id}`}
+                                  type="file"
+                                  accept=".pdf,application/pdf"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      handleSyllabusUpload(course.id, file);
+                                      e.target.value = "";
+                                    }
+                                  }}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  {uploadingSyllabus[course.id]
+                                    ? "Uploading syllabus..."
+                                    : courseExtras[course.id]?.syllabusFileName
+                                      ? `Last file: ${courseExtras[course.id]?.syllabusFileName}`
+                                      : "Supports PDF files only."}
+                                </p>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium">Marks lost</p>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={100}
+                              placeholder="0-100"
+                              className="h-8 w-24 rounded-xl"
+                              value={marksLostInputs[course.id] ?? (courseExtras[course.id]?.marksLost?.toString() || "")}
+                              onChange={(e) => {
+                                setMarksLostInputs((prev) => ({
+                                  ...prev,
+                                  [course.id]: e.target.value,
+                                }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  saveMarksLost(course.id);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-8 rounded-xl"
+                              onClick={() => saveMarksLost(course.id)}
+                            >
+                              <Upload className="h-3.5 w-3.5 mr-1" />
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+
+                        {courseExtras[course.id]?.marksLost !== null && courseExtras[course.id]?.marksLost !== undefined ? (
+                          <>
+                            <Progress
+                              value={Math.max(0, 100 - (courseExtras[course.id]?.marksLost || 0))}
+                              className="h-2 rounded-full"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Predicted maximum after guaranteed loss: {Math.max(0, 100 - (courseExtras[course.id]?.marksLost || 0)).toFixed(1)}% ({getLetterGrade(Math.max(0, 100 - (courseExtras[course.id]?.marksLost || 0)))})
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Enter guaranteed lost marks to see your best possible grade.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
